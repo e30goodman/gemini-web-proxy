@@ -1,0 +1,18 @@
+[Unit]
+Description=Gemini DOM watcher daemon (keeps the browser warm, buffers answers)
+After=gemini-web-proxy.service
+
+[Service]
+Type=simple
+User=user
+Environment=WATCH_POLL_SEC=1.5
+Environment=WATCH_IDLE_TIMEOUT_S=3600
+Environment=WATCH_ACTIVE_GRACE_S=120
+EnvironmentFile=/opt/gemini-web-proxy/.env
+ExecStart=/usr/bin/python3 /opt/gemini-web-proxy/src/gemini_dom_watcher.py
+WorkingDirectory=/opt/gemini-web-proxy
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

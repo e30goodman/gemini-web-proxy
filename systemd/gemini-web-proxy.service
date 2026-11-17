@@ -1,0 +1,18 @@
+[Unit]
+Description=Gemini Web (browser cookie) OpenAI-compatible proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=user
+WorkingDirectory=/opt/gemini-web-proxy
+EnvironmentFile=/opt/gemini-web-proxy/.env
+ExecStart=/opt/gemini-web-proxy/.venv/bin/python /opt/gemini-web-proxy/src/server.py
+Restart=on-failure
+RestartSec=10
+WatchdogSec=20
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

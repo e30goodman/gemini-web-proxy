@@ -1,0 +1,8 @@
+#!/bin/sh
+# gemini-image <image.png[,image2.png,...]> <prompt.txt> [out_dir]  - free image job through the real Firefox Gemini (gemini-pump, :2); several images comma-separated
+# [claude] 2026-11-03. Uses the bridge lock, so it waits if a text request runs.
+[ $# -lt 2 ] && { echo "usage: gemini-image <image.png> <prompt.txt> [out_dir]"; exit 2; }
+OUT=${3:-$HOME/gemini_jobs/$(date +%Y%m%d-%H%M%S)}; mkdir -p "$OUT"
+E=${GEMINI_ENV_FILE:-$(dirname "$0")/../.env}
+export XDG_RUNTIME_DIR=$(grep -E '^XDG_RUNTIME_DIR=' $E | cut -d= -f2-) DBUS_SESSION_BUS_ADDRESS=$(grep -E '^DBUS_SESSION_BUS_ADDRESS=' $E | cut -d= -f2-)
+exec "${GEMINI_IMAGE_JOB_PY:-$(dirname "$0")/../src/gemini_image_job.py}" "$1" "$2" "$OUT" --timeout ${GEMINI_IMAGE_TIMEOUT:-300}

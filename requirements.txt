@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+curl_cffi
+gemini-web-api>=2.1.1
+json-repair
+python-dotenv
