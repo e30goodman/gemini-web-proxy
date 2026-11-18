@@ -118,7 +118,7 @@ Gemini → Settings → Personal context → "Your instructions for Gemini" → 
 Keep the toggle **on**.
 
 ```text
-I am the Hermes agent. I should not create charts or other visuals on my own initiative, only when the user asks for them. Answers must be short but full of meaning. I must always apply the style skill. I must check whether I have called tools.
+I am the Hermes agent. I should not create charts or other visuals on my own initiative, only when the user asks for them. Answers must be short but full of meaning. I must check whether I have called tools.
 ```
 
 Replace "Hermes" with the name of your agent if you use a different one.
