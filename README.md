@@ -97,6 +97,10 @@ pip install -r requirements.txt
 cp .env.example .env
 ./scripts/gemini-login.sh          # see docs/LOGIN.md
 
+# 3b. in that Gemini account add the tool-call-formatter skill and the
+#     personal instructions -- REQUIRED for tool calls, see
+#     docs/GEMINI_ACCOUNT_SETUP.md
+
 # 4. run
 .venv/bin/python src/server.py       # http://127.0.0.1:9658
 # + in a second shell, the warm-browser daemon:
@@ -134,6 +138,8 @@ All knobs are env vars, see `.env.example`. The important ones:
 
 ## Docs
 
+- `docs/GEMINI_ACCOUNT_SETUP.md` — **required**: the `tool-call-formatter`
+  skill and personal instructions to add in your Gemini subscription settings.
 - `docs/ARCHITECTURE.md` — the transport, tool-call emulation, session mapping.
 - `docs/LOGIN.md` — how to log into the hidden browser (VNC) step by step.
 - `docs/HERMES_INTEGRATION.md` — wiring into Hermes, one chat per session,
