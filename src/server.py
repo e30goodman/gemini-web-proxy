@@ -1165,6 +1165,61 @@ def parse_tool_call(text: str, allowed_names=None):
     return None
 
 
+# BROKEN-CALL guard: Gemini sometimes writes a call (TOOL_CALL: name /
+# arguments: {...} or a tool_call envelope) whose JSON is invalid, e.g. an
+# unescaped quote inside a shell command. Without this guard the raw text went
+# to the client as a "final answer". Now such markup is never passed on: the
+# bridge asks Gemini to re-emit the call as valid JSON
+# (GEMINI_BROKEN_CALL_RETRIES, default 2); if it still fails, the client gets a
+# short plain notice instead of the garbage.
+BROKEN_CALL_RETRIES = int(os.environ.get("GEMINI_BROKEN_CALL_RETRIES", "2"))
+_BROKEN_CALL_RE = re.compile(
+    r'TOOL_CALLS?\s*:|"tool_calls?"\s*:|^\s*arguments\s*:\s*\{', re.I | re.M)
+
+
+def _looks_like_broken_call(text: str) -> bool:
+    return bool(text) and bool(_BROKEN_CALL_RE.search(text))
+
+
+def _broken_call_prompt(allowed_names) -> str:
+    names = ", ".join(sorted(n for n in (allowed_names or []) if n))
+    return (
+        "Your previous tool call was NOT recognized: the JSON is invalid "
+        "(usually an unescaped double quote or a raw newline inside a string "
+        "value). Re-emit the SAME call(s) right now as ONE clean JSON object, "
+        "no text around it and no ```:\n"
+        '{"tool_call": {"name": "<name>", "arguments": {...}}}\n'
+        'or for several independent calls: {"tool_calls": [{"name": "...", "arguments": {...}}, ...]}\n'
+        "Inside strings escape every \\\" and write newlines as \\n. For "
+        "multi-line python/sql inside a command use single quotes inside, or "
+        "write the script to a file with a separate call.\n"
+        "Available tools: %s" % (names or "see the task"))
+
+
+def _parse_legacy_multi(text: str, allowed_names=None) -> list[dict]:
+    """All 'TOOL_CALL: name ... {json}' blocks, not only the first."""
+    out = []
+    for m in re.finditer(r"TOOL_CALL:\s*([\w.-]+)\s*", text, re.I):
+        name = m.group(1)
+        after = text[m.end():]
+        nxt = re.search(r"TOOL_CALL:", after, re.I)
+        seg = after[:nxt.start()] if nxt else after
+        brace = seg.find("{")
+        if brace == -1:
+            return []
+        raw = extract_balanced_json(seg, brace)
+        if not raw:
+            return []
+        try:
+            args = _try_json_load(raw)
+        except Exception:
+            return []
+        if not isinstance(args, dict) or (allowed_names and name not in allowed_names):
+            return []
+        out.append({"name": name, "arguments": json.dumps(args, ensure_ascii=False)})
+    return out
+
+
 def parse_tool_calls(text: str, allowed_names=None) -> list[dict]:
     """Find tool calls in the model's plain-text answer.
     Supports both the new array envelope {"tool_calls":[...]} and falls back
@@ -1196,6 +1251,13 @@ def parse_tool_calls(text: str, allowed_names=None) -> list[dict]:
                             return valid
                 except Exception as exc:
                     log.info("parse_tool_calls: envelope JSON failed: %s", exc)
+
+    # 1b) several legacy TOOL_CALL blocks -> all of them (all must parse)
+    if len(re.findall(r"TOOL_CALL:", text, re.I)) > 1:
+        multi = _parse_legacy_multi(text, allowed_names)
+        if multi:
+            log.info("parse_tool_calls: legacy multi success %d calls", len(multi))
+            return multi
 
     # 2) Fallback to legacy single-call parser.
     tc = parse_tool_call(text, allowed_names)
@@ -2560,6 +2622,38 @@ async def _chat_completions_inner(request: Request):
         except Exception as exc:
             log.warning("forced tool_calls retry failed: %.200s", exc)
 
+    # BROKEN-CALL guard (see BROKEN_CALL_RETRIES above).
+    _broken_failed = False
+    if tools and allowed_names and not tool_calls and USE_ATSPI_BRIDGE \
+            and _looks_like_broken_call(text):
+        log.info("broken-call: unparsable tool-call markup (%.160s)", text.replace("\n", " "))
+        for _bc in range(1, BROKEN_CALL_RETRIES + 1):
+            try:
+                _bt = (await generate_via_atspi_bridge(
+                    activation_text, _broken_call_prompt(allowed_names),
+                    session_id=session_id)).strip()
+            except Exception as exc:
+                log.warning("broken-call re-request failed: %.200s", exc)
+                break
+            _btc = parse_tool_calls(_bt, allowed_names) if _bt else []
+            if _btc:
+                log.info("broken-call: retry #%d fixed -> %s", _bc, [t["name"] for t in _btc])
+                text, tool_calls = _bt, _btc
+                break
+            if _bt and not _looks_like_broken_call(_bt):
+                log.info("broken-call: retry #%d answered without a call -> pass on", _bc)
+                text = _bt
+                break
+            log.info("broken-call: retry #%d still broken", _bc)
+        else:
+            _broken_failed = True
+        if not tool_calls and _looks_like_broken_call(text):
+            _broken_failed = True
+        if _broken_failed:
+            log.info("broken-call: giving up, plain notice to client")
+            text = ("Warning (bridge): Gemini returned a tool call with broken JSON "
+                    "several times; the call was dropped. Repeat the task or switch model.")
+
     # ---- Hook judge: the model may have "gone silent" without a tool_call when work was required.
     # If the task carried tools, the model returned ONLY text without a single tool_call,
     # and the free judge (mcp_llm_status: delegate free) decided "CONTINUE" — we re-request
@@ -2579,7 +2673,8 @@ async def _chat_completions_inner(request: Request):
     if _giveup_demanded:
         log.info("giveup-demand: model asked for more info on imperative task "
                  "(%.180s)", text.replace("\n", " "))
-    while (tools and not tool_calls and not forced and hook_rounds < HOOK_MAX_ROUNDS
+    while (tools and not tool_calls and not forced and not _broken_failed
+           and hook_rounds < HOOK_MAX_ROUNDS
            and (clarify_vetoed or _giveup_demanded
                 or _should_hook(messages, text, tools))):
         hook_rounds += 1
@@ -2711,7 +2806,8 @@ async def _chat_completions_inner(request: Request):
             json.loads(_txt_s); _is_json = True
         except Exception:
             pass
-    if not tool_calls and USE_ATSPI_BRIDGE and DECISION_ENABLED and tools and not _is_json:
+    if not tool_calls and USE_ATSPI_BRIDGE and DECISION_ENABLED and tools and not _is_json \
+            and not _broken_failed:
         for _round in range(1, DECISION_MAX_ROUNDS + 1):
             _verdict = await _decide(messages, text, bool(tools))
             if _verdict == "DONE":

@@ -133,6 +133,7 @@ All knobs are env vars, see `.env.example`. The important ones:
 | `JUDGE_ENABLED`, `DECISION_API_KEY` | off | optional resilience layers |
 | `GEMINI_DELTA` / `GEMINI_DELTA_ROLLOVER` | `1` / `40` | send only new messages on continue; fresh chat after N steps |
 | `GEMINI_LIMIT_MODE` / `GEMINI_LIMIT_TZ` | `wait` / system time zone | park agent turns while the target model is limited (`lite` = answer on the smaller model) |
+| `GEMINI_BROKEN_CALL_RETRIES` | `2` | when Gemini writes a tool call with invalid JSON, ask it this many times to re-emit valid JSON; then a short notice instead of the raw text |
 | `GEMINI_WEB_EFFORT` | `medium` | reasoning level the bridge enforces every session (`low` / `medium` / `high` / `off`); a request's `reasoning_effort` overrides it |
 | `GEMINI_WEB_MODEL` | `hydrogen` | model for ids other than `gemini-lite` / `gemini-hydrogen` / `gemini-argon` (the model is chosen per request) |
 
