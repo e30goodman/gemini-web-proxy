@@ -4,9 +4,12 @@ The bridge drives the real Gemini web UI, so two things must be configured
 **inside your Gemini subscription settings** (gemini.google.com, the account
 the proxy is logged into). Without them tool calls do not work.
 
-1. The **`tool-call-formatter` skill** — required. The proxy activates it on
-   every session with the hidden trigger `skill tool-call-formatter`; Gemini
-   then answers tool calls as raw JSON that the proxy parses. If the skill is
+1. The **`tool-call-formatter` skill** — required. The proxy attaches it to
+   every message it sends: it types `@tool-call` in the input and picks the
+   skill from Gemini's `@` menu (a skill chip). Gemini then answers tool calls
+   as raw JSON that the proxy parses. (`GEMINI_SKILL_MODE=text` = the older
+   text trigger, which newer Gemini versions answer with "command not
+   recognized".) If the skill is
    missing, Gemini answers in prose and the agent never gets a tool call.
 2. **Personal instructions** ("Your instructions for Gemini") — recommended.
    They keep answers short and stop Gemini from adding tables, charts and other
@@ -125,6 +128,6 @@ Replace "Hermes" with the name of your agent if you use a different one.
 
 ## Check
 
-Open a new Gemini chat and send `skill tool-call-formatter`. Gemini should
-reply that the skill is active. Then run the `curl` test from the README with a
+Open a new Gemini chat and type `@tool-call` in the input: the skill must show
+up in the `@` menu. Then run the `curl` test from the README with a
 `tools` array — the reply must contain `tool_calls`.

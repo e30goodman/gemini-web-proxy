@@ -1029,6 +1029,12 @@ _REFUSAL_PATTERNS = (
     # our own tool block taken for an attack
     "prompt injection",
     "prompt-injection",
+    # seen live on the Auto model: "no access to the browser ... only skill tools"
+    "no access to the browser",
+    "no access to a browser",
+    "only skill tools",
+    "i don't have tools",
+    "i do not have tools",
 )
 
 
@@ -2818,6 +2824,7 @@ async def _chat_completions_inner(request: Request):
                     "technical problem", "unavailable", "invalid_argument",
                     "tools in this session", "system tool call",
                     "function call execution error", "advise",
+                    "no access to", "only skill tools", "don't have tools", "do not have tools",
                 )
             )
             _injection_excuse = "injection" in _low_ref
@@ -2867,6 +2874,21 @@ async def _chat_completions_inner(request: Request):
                 challenge = challenge.replace("%s", last_user[:1500], 1)
             retry_prompt = _hook_prompt(prompt, messages, allowed_names,
                                         demand="tool") + "\n\n" + challenge
+            # A chat where Gemini decided our tool block is an attack stays
+            # poisoned -> drop it, redo the task in a FRESH chat with the full
+            # prompt (it carries RUNTIME_CONTEXT_NOTE).
+            if _injection_excuse and USE_ATSPI_BRIDGE and session_id and _session_db.get(session_id):
+                log.info("refusal (injection): unbind %s, fresh chat with full prompt", session_id)
+                _session_db.pop(session_id, None)
+                _save_session_db()
+                try:
+                    _ddb = gemini_delta.load_state()
+                    _ddb.pop(session_id, None)
+                    gemini_delta.save_state(_ddb)
+                except Exception:
+                    pass
+                _count_new_chat(session_id, "restart:refusal-injection")
+                retry_prompt = full_prompt
             log.info("refusal detected: restarting the task with a proof (%d chars text, video=%s)",
                      len(text), _video_refusal)
             try:

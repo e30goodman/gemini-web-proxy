@@ -820,6 +820,97 @@ def confirm_sent(prev_sig, timeout=None):
     return False
 
 
+def _field_text(entry):
+    """All text in the chat input (children), '' when unknown."""
+    out, stack = [], [entry] if entry is not None else []
+    while stack:
+        n = stack.pop()
+        try:
+            cnt = n.childCount
+        except Exception:
+            continue
+        for i in range(cnt):
+            try:
+                ch = n.getChildAtIndex(i)
+                out.append(ch.queryText().getText(0, -1))
+            except Exception:
+                ch = None
+            if ch is not None:
+                stack.append(ch)
+    return "".join(out)
+
+
+def _find_menu_item(prefix):
+    import pyatspi
+    found = []
+
+    def walk(n):
+        if found:
+            return
+        try:
+            r = n.getRoleName()
+            nm = n.name or ""
+        except Exception:
+            return
+        if r == "menu item" and nm.startswith(prefix):
+            found.append(n)
+            return
+        try:
+            cnt = n.childCount
+        except Exception:
+            cnt = 0
+        for i in range(cnt):
+            try:
+                walk(n.getChildAtIndex(i))
+            except Exception:
+                pass
+    for a in pyatspi.Registry.getDesktop(0):
+        try:
+            if a and a.name == "Firefox":
+                walk(a)
+                break
+        except Exception:
+            pass
+    return found[0] if found else None
+
+
+def attach_skill(wid, name):
+    """SKILL CHIP: since the Gemini UI update the text trigger
+    '/tool-call-formatter' is answered 'command not recognized'. Skills are now
+    picked from the '@' menu and sit in the input as a chip. Type '@<name>',
+    press the menu item, verify the chip is in the field. False -> field cleared,
+    caller falls back to the old text trigger."""
+    global _ENTRY_CACHE
+    try:
+        _activate(wid)
+        entry = find_real_entry()
+        _click_entry(entry)
+        sh(["xdotool", "key", "--clearmodifiers", "ctrl+a"])
+        sh(["xdotool", "key", "--clearmodifiers", "Delete"])
+        sh(["xdotool", "type", "--clearmodifiers", "--delay", "40", "@" + name[:9]])
+        t0, item = time.time(), None
+        while time.time() - t0 < float(os.environ.get("GEMINI_SKILL_MENU_S", "6")):
+            item = _find_menu_item(name)
+            if item is not None:
+                break
+            time.sleep(0.4)
+        if item is None:
+            print("[skill] menu item %s not found - text trigger fallback" % name, file=sys.stderr)
+        else:
+            item.queryAction().doAction(0)
+            time.sleep(0.6)
+            if name in _field_text(entry):
+                _ENTRY_CACHE = entry
+                print("[skill] chip %s attached in %.1fs" % (name, time.time() - t0), file=sys.stderr)
+                return True
+            print("[skill] chip not in the field after press - text trigger fallback", file=sys.stderr)
+        sh(["xdotool", "key", "--clearmodifiers", "ctrl+a"])
+        sh(["xdotool", "key", "--clearmodifiers", "Delete"])
+    except Exception as exc:
+        print("[skill] attach failed: %s - text trigger fallback" % exc, file=sys.stderr)
+    return False
+
+
 def read_response(timeout=40, poll=0.6, min_requests=1):
     import pyatspi
 
@@ -1258,6 +1349,15 @@ def main():
               _ef['target'], _ef['secs']), file=sys.stderr)
     except Exception as _ef_exc:
         print("[effort] guard failed: %s - continuing" % _ef_exc, file=sys.stderr)
+    # SKILL CHIP (see attach_skill): the skill rides with THIS message as a chip -
+    # no text trigger, no separate activation turn (fresh chats save ~12 s).
+    # GEMINI_SKILL_MODE=text = old behaviour; failure -> old behaviour.
+    _chip = False
+    if activation and not images and os.environ.get("GEMINI_SKILL_MODE", "chip") != "text":
+        _chip = attach_skill(wid, activation.lstrip("/").split()[0])
+        if _chip:
+            activation_merged = True
+            activation = ""
     if activation:
         if continue_conv:
             # CONTINUE: the inject goes TOGETHER with the prompt, as one message
@@ -1321,7 +1421,7 @@ def main():
             sys.exit(3)
         _pasted = send_prompt(wid, prompt, clear=False) or True  # vision: images count too
     else:
-        _pasted = send_prompt(wid, prompt)
+        _pasted = send_prompt(wid, prompt, clear=not _chip)  # keep the skill chip
     if not _pasted or not confirm_sent(_prev_sig):
         # never read the OLD answer back as the new one:
         # continue -> exit 4 (proxy opens a fresh chat with the full prompt),
