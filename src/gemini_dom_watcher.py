@@ -88,6 +88,18 @@ LOCK_FILE = Path("/tmp/gemini_dom_watcher.lock")
 # starts the browser again on the next request. So we wait IDLE_TIMEOUT_S and do
 # NOT touch the browser if the buffer shows an active generation.
 IDLE_TIMEOUT_S = float(os.environ.get("WATCH_IDLE_TIMEOUT_S", "900"))  # 15 min
+# Shorter idle at night: 00:00-07:00 local time the browser closes after
+# WATCH_IDLE_NIGHT_S (default 15 min), daytime keeps WATCH_IDLE_TIMEOUT_S.
+# Night window: WATCH_NIGHT_FROM / WATCH_NIGHT_TO (hours).
+IDLE_NIGHT_S = float(os.environ.get("WATCH_IDLE_NIGHT_S", "900"))
+NIGHT_FROM = int(os.environ.get("WATCH_NIGHT_FROM", "0"))
+NIGHT_TO = int(os.environ.get("WATCH_NIGHT_TO", "7"))
+
+
+def _idle_limit() -> float:
+    h = time.localtime().tm_hour
+    night = (NIGHT_FROM <= h < NIGHT_TO) if NIGHT_FROM <= NIGHT_TO else (h >= NIGHT_FROM or h < NIGHT_TO)
+    return IDLE_NIGHT_S if night else IDLE_TIMEOUT_S
 # After our own teardown, do not bring the browser back via self-heal for a while,
 # otherwise teardown <-> ensure_running fight in an endless loop (2026-10-04).
 RECOVERY_SUPPRESS_S = float(os.environ.get("WATCH_RECOVERY_SUPPRESS_S", "420"))  # 7 min
@@ -334,7 +346,7 @@ def main():
                 for e in buf.values()
             )
             idle_for = now - last_activity_t
-            if idle_for >= IDLE_TIMEOUT_S and not any_active:
+            if idle_for >= _idle_limit() and not any_active:
                 # Race with the server: a request could arrive right between ticks.
                 # If the server currently holds a live request (the bridge
                 # subprocess), we must not close the browser — it would cut the

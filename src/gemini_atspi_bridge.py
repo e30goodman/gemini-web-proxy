@@ -21,6 +21,8 @@ import subprocess
 import sys
 import time
 import os
+import json
+import re
 import signal
 import fcntl
 
@@ -227,6 +229,27 @@ def new_chat_session(wid):
         if not get_current_conv_id():
             break
         time.sleep(0.15)
+    # On a hung page the shortcut does nothing and the "fresh" prompt went into
+    # the OLD chat. Still on a /app/<id> -> open the new-chat URL directly.
+    if get_current_conv_id():
+        print("[new chat] shortcut did not leave the old chat - opening /app directly",
+              file=sys.stderr)
+        _activate(wid)
+        sh(["xdotool", "key", "--clearmodifiers", "ctrl+l"])
+        time.sleep(0.3)
+        sh(["xdotool", "type", "--clearmodifiers", "--delay", "5", "https://gemini.google.com/app"],
+           timeout=20)
+        sh(["xdotool", "key", "--clearmodifiers", "Return"])
+        _dl = time.time() + 8
+        while time.time() < _dl:
+            time.sleep(0.5)
+            if not get_current_conv_id():
+                break
+        time.sleep(1.5)  # let the empty chat render its input
+        _ENTRY_CACHE = None
+        if get_current_conv_id():
+            print("[new chat] FAILED: still in an old chat - exit 9", file=sys.stderr)
+            sys.exit(9)
 
 
 _ENTRY_CACHE = None  # [claude] 2026-11-14 PERF: one AT-SPI walk per bridge run, not per message
@@ -264,14 +287,21 @@ def find_real_entry():
                 return a
         return None
 
+    # Since a Gemini UI update (Nov 2026) the page has TWO entries with the same
+    # name (an inert one first, the real input later). The first match was the
+    # inert one, so paste checks read 0 chars while the text was in the real
+    # field. Collect all and prefer focused > showing+visible > the last one.
+    found = []
+
     def walk(node):
         try:
             role = node.getRoleName()
             name = node.name
         except Exception:
-            return None
+            return
         if role == "entry" and "Gemini" in (name or ""):
-            return node
+            found.append(node)
+            return
         try:
             n = node.childCount
         except Exception:
@@ -281,15 +311,25 @@ def find_real_entry():
                 child = node.getChildAtIndex(i)
             except Exception:
                 continue
-            found = walk(child)
-            if found is not None:
-                return found
-        return None
+            walk(child)
 
     app = find_app("Firefox")
     if app is None:
         return None
-    return walk(app)
+    walk(app)
+    if not found:
+        return None
+
+    def _st(n, s):
+        try:
+            return n.getState().contains(s)
+        except Exception:
+            return False
+    for n in found:
+        if _st(n, pyatspi.STATE_FOCUSED):
+            return n
+    vis = [n for n in found if _st(n, pyatspi.STATE_SHOWING) and _st(n, pyatspi.STATE_VISIBLE)]
+    return (vis or found)[-1]
 
 
 def get_current_conv_id():
@@ -519,7 +559,8 @@ def send_prompt(wid, text, clear=True):
     if len(text) > 20000:
         ok = got is not None and got > len(text) * 0.5
     else:
-        ok = (got == len(text))
+        # the field drops newlines - don't redo a good paste for them
+        ok = got is not None and len(text) - text.count("\n") - 2 <= got <= len(text)
     print("[send_prompt] pasted %d chars, field holds %s, verified=%s%s"
           % (len(text), got, ok, " (cached entry)" if _from_cache else ""), file=sys.stderr)
     if not ok and _from_cache:
@@ -528,8 +569,57 @@ def send_prompt(wid, text, clear=True):
         _ENTRY_CACHE = None
         print("[send_prompt] cached entry missed - retry with fresh walk", file=sys.stderr)
         return send_prompt(wid, text, clear=True)
+    # A missed paste (field empty) used to be followed by Enter anyway -> nothing
+    # sent -> the OLD answer was read back -> the agent looped on the same tool
+    # call. Now: retry the paste with a real click into the field. If the field
+    # still reads empty, press Enter anyway - the reading itself may be wrong
+    # after a UI change; confirm_sent() checks the page for the real result.
+    landed = got is not None and (got > len(text) * 0.5 if len(text) > 10 else got > 0)
+    if clear and not landed:
+        for _try in (1, 2):
+            print("[send_prompt] paste missed (field %s of %d) - retry %d with click focus"
+                  % (got, len(text), _try), file=sys.stderr)
+            _activate(wid)
+            entry = find_real_entry()
+            _click_entry(entry)
+            sh(["xdotool", "key", "--clearmodifiers", "ctrl+a"])
+            sh(["xdotool", "key", "--clearmodifiers", "Delete"])
+            clip = subprocess.Popen(["xclip", "-selection", "clipboard", "-loops", "1"],
+                                    env=clip_env, stdin=subprocess.PIPE,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            clip.stdin.write(text.encode("utf-8"))
+            clip.stdin.close()
+            time.sleep(0.3)
+            sh(["xdotool", "key", "--clearmodifiers", "ctrl+v"], timeout=15)
+            try:
+                clip.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                clip.kill()
+            time.sleep(PASTE_SETTLE)
+            got = field_text_len(entry)
+            landed = got is not None and (got > len(text) * 0.5 if len(text) > 10 else got > 0)
+            if landed:
+                print("[send_prompt] retry %d landed: field holds %s" % (_try, got), file=sys.stderr)
+                break
+        if not landed:
+            print("[send_prompt] paste not verified after retries - Enter anyway, page check decides",
+                  file=sys.stderr)
     sh(["xdotool", "key", "--clearmodifiers", "Return"])
-    return ok
+    return True
+
+
+def _click_entry(entry):
+    """Real mouse click into the chat input (focus that survives a lost grabFocus)."""
+    if entry is None:
+        return
+    try:
+        import pyatspi
+        x, y, w, h = entry.queryComponent().getExtents(pyatspi.DESKTOP_COORDS)
+        if w > 0 and h > 0:
+            sh(["xdotool", "mousemove", str(x + w // 2), str(y + h // 2), "click", "1"])
+            time.sleep(0.3)
+    except Exception as exc:
+        print("[send_prompt] click focus failed: %s" % exc, file=sys.stderr)
 
 
 def field_text_len(entry=None):
@@ -647,6 +737,86 @@ def wait_idle(min_rated=0, timeout=45, poll=0.5):
             return True
         time.sleep(poll)
     print("[wait_idle] timeout %ds (idle=%s rated=%s)" % (timeout, st[0], st[1]), file=sys.stderr)
+    return False
+
+
+_MODEL_CHECK_FILE = "/tmp/gemini_model_check.json"
+
+
+def last_request_signature():
+    """SEND CONFIRM: text of the LAST request block on the page (our echoed
+    message under the request heading), whitespace removed. If it does not
+    change after Enter, Gemini did not take the message (seen live: the old
+    answer was read back again and again -> the agent looped)."""
+    import pyatspi
+    app = None
+    for a in pyatspi.Registry.getDesktop(0):
+        try:
+            if a and a.name == "Firefox":
+                app = a
+                break
+        except Exception:
+            pass
+    if app is None:
+        return None
+    out = []
+
+    def walk(n):
+        try:
+            role = n.getRoleName()
+        except Exception:
+            return
+        if role in ("heading", "paragraph", "list item", "entry"):
+            try:
+                t = n.queryText().getText(0, -1)
+            except Exception:
+                t = ""
+            if t and t.strip():
+                out.append((role, t))
+            if role == "entry":
+                return  # the input field: its text is not on the page yet
+        try:
+            cnt = n.childCount
+        except Exception:
+            cnt = 0
+        for i in range(cnt):
+            try:
+                walk(n.getChildAtIndex(i))
+            except Exception:
+                pass
+    walk(app)
+    last = None
+    for i, (role, t) in enumerate(out):
+        if role == "heading" and any(t.strip().startswith(h) for h in UI_REQUEST_HEADING):
+            last = i
+    if last is None:
+        return ""
+    parts = [out[last][1]]
+    for role, t in out[last + 1:]:
+        if role == "entry" or (role == "heading" and any(t.strip().startswith(h) for h in UI_ANSWER_HEADING)):
+            break
+        parts.append(t)
+    return re.sub(r"\s+", "", "".join(parts).replace("\ufffc", ""))
+
+
+def confirm_sent(prev_sig, timeout=None):
+    """True when the last request block on the page changed after our Enter.
+    One extra Enter after half the wait (a lost keypress). prev_sig None -> skip.
+    GEMINI_SEND_CONFIRM=0 turns it off, GEMINI_SEND_CONFIRM_S = wait (14 s)."""
+    if prev_sig is None or os.environ.get("GEMINI_SEND_CONFIRM", "1") == "0":
+        return True
+    timeout = timeout or float(os.environ.get("GEMINI_SEND_CONFIRM_S", "14"))
+    t0, again = time.time(), False
+    while time.time() - t0 < timeout:
+        sig = last_request_signature()
+        if sig is not None and sig != prev_sig and sig:
+            print("[send] confirmed in %.1fs" % (time.time() - t0), file=sys.stderr)
+            return True
+        if not again and time.time() - t0 > timeout / 2:
+            again = True
+            print("[send] not on the page yet - pressing Enter again", file=sys.stderr)
+            sh(["xdotool", "key", "--clearmodifiers", "Return"])
+        time.sleep(1.0)
     return False
 
 
@@ -1008,8 +1178,19 @@ def main():
     if continue_conv:
         # Continue an existing session: do NOT create a new chat, open the saved
         # conv_id by URL. Gemini restores exactly that session.
-        navigate_to_chat(continue_conv)
-        time.sleep(1.0)
+        # the chat is already on screen -> no reload (saves the page load and
+        # re-render; GEMINI_ALWAYS_NAVIGATE=1 = old behaviour)
+        _cur = None
+        try:
+            _cur = get_current_conv_id()
+        except Exception:
+            pass
+        if (os.environ.get("GEMINI_ALWAYS_NAVIGATE", "0") != "1" and _cur
+                and continue_conv.split("/")[-1] in _cur):
+            print("[navigate] already open: %s - no reload" % continue_conv, file=sys.stderr)
+        else:
+            navigate_to_chat(continue_conv)
+            time.sleep(1.0)
         # If the saved chat did not open we must NOT paste
         # into whatever chat is on screen. Exit 4 -> proxy rebinds to a fresh chat.
         if os.environ.get("GEMINI_DELTA", "1") != "0" and not conv_is_open(continue_conv):
@@ -1026,23 +1207,48 @@ def main():
     # inject. Finds the picker by name, no coordinates. The target comes per
     # request (set by the proxy from the client's model id); a strict model that
     # cannot be selected -> exit 7, a limited one in wait mode -> exit 5 (park).
-    try:
-        import gemini_model
-        _ok = gemini_model.ensure_model()
-        _lt = ""
-        if limit_wait:
-            _ok, _lt = _limit_check(_ok)
-        if not _ok and limit_wait and _lt:
+    # MODEL CHECK CACHE: the model guard walks the whole page (~1-3 s). On a
+    # continued chat whose model + level were verified less than
+    # GEMINI_MODEL_CHECK_TTL s ago (default 120) it is skipped. Fresh chats, a
+    # model/level change or an expired entry always check. The level guard is
+    # cheap (~0.3 s) and always runs.
+    _mc_key = "%s|%s|%s" % (continue_conv or "", os.environ.get("GEMINI_WEB_MODEL", ""),
+                            os.environ.get("GEMINI_WEB_EFFORT", ""))
+    _mc_skip = False
+    if continue_conv:
+        try:
+            _mc = json.load(open(_MODEL_CHECK_FILE, encoding="utf-8"))
+            _mc_skip = (_mc.get("key") == _mc_key and
+                        time.time() - float(_mc.get("ts", 0)) < float(os.environ.get("GEMINI_MODEL_CHECK_TTL", "120")))
+        except Exception:
+            _mc_skip = False
+    if _mc_skip:
+        print("[model] check skipped (same chat/model/level verified recently)", file=sys.stderr)
+    else:
+        try:
+            import gemini_model
+            _ok = gemini_model.ensure_model()
+            _lt = ""
+            if limit_wait:
+                _ok, _lt = _limit_check(_ok)
+            if not _ok and limit_wait and _lt:
+                gemini_model.write_state(_ok)
+                print("[limit] LIMITED: %s" % _lt, file=sys.stderr)
+                if not keep_open:
+                    teardown()
+                sys.exit(5)
+            if not _ok and gemini_model.spec()[1].get("strict"):
+                _model_unavailable(keep_open)
             gemini_model.write_state(_ok)
-            print("[limit] LIMITED: %s" % _lt, file=sys.stderr)
-            if not keep_open:
-                teardown()
-            sys.exit(5)
-        if not _ok and gemini_model.spec()[1].get("strict"):
-            _model_unavailable(keep_open)
-        gemini_model.write_state(_ok)
-    except Exception as _sel_exc:
-        print("[model] guard failed: %s - continuing with current model" % _sel_exc, file=sys.stderr)
+        except Exception as _sel_exc:
+            print("[model] guard failed: %s - continuing with current model" % _sel_exc, file=sys.stderr)
+        if continue_conv:
+            try:
+                import gemini_model as _gm
+                if _gm.LAST_FAIL == "":
+                    json.dump({"key": _mc_key, "ts": time.time()}, open(_MODEL_CHECK_FILE, "w"))
+            except Exception:
+                pass
     # Gemini resets the reasoning level to low now and then -> read it and set
     # GEMINI_WEB_EFFORT (default medium) every session.
     try:
@@ -1104,13 +1310,27 @@ def main():
             except Exception:
                 pass
     # Step 2 of 2: the real request, as a continuation of the same chat.
+    try:
+        _prev_sig = last_request_signature()
+    except Exception as _se:
+        print("[send] signature failed: %s - no confirm" % _se, file=sys.stderr)
+        _prev_sig = None
     if images:
         if not attach_images(wid, images):
             print("[vision] no image could be attached", file=sys.stderr)
             sys.exit(3)
-        send_prompt(wid, prompt, clear=False)
+        _pasted = send_prompt(wid, prompt, clear=False) or True  # vision: images count too
     else:
-        send_prompt(wid, prompt)
+        _pasted = send_prompt(wid, prompt)
+    if not _pasted or not confirm_sent(_prev_sig):
+        # never read the OLD answer back as the new one:
+        # continue -> exit 4 (proxy opens a fresh chat with the full prompt),
+        # fresh chat -> exit 9 (plain error to the client).
+        _code = 4 if continue_conv else 9
+        print("[send] NOT ACCEPTED by Gemini (page unchanged) - exit %d" % _code, file=sys.stderr)
+        if not keep_open:
+            teardown()
+        sys.exit(_code)
     response = read_response(timeout=timeout, min_requests=2 if activation and not continue_conv and not activation_merged else 1)
     print(response.replace("\ufffc", ""))
 

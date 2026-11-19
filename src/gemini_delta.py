@@ -29,7 +29,14 @@ DELTA_LOG = os.environ.get("GEMINI_DELTA_LOG", str(_VAR / "delta.log"))
 DELTA_PRUNE_S = 7 * 86400
 # 1 = every delta carries the tool schemas (default). 0 = schemas only when the
 # tool set changed since the last delivery (they are already in the chat).
-DELTA_SCHEMAS_ALWAYS = os.environ.get("GEMINI_DELTA_SCHEMAS", "1") != "0"
+# Default 0 since Nov 2026: resending ~40k chars of schemas on EVERY step blew a
+# Gemini chat up until it stopped taking messages. Now: schemas when the tool
+# set changed, plus a reminder every GEMINI_DELTA_SCHEMAS_EVERY steps (0 = never).
+# "1" = schemas on every step (old behaviour).
+DELTA_SCHEMAS_ALWAYS = os.environ.get("GEMINI_DELTA_SCHEMAS", "0") != "0"
+DELTA_SCHEMAS_EVERY = int(os.environ.get("GEMINI_DELTA_SCHEMAS_EVERY", "8"))
+# fresh chat once this many chars were sent into one Gemini chat (0 = off)
+DELTA_MAX_CHAT_CHARS = int(os.environ.get("GEMINI_DELTA_MAX_CHAT_CHARS", "500000"))
 TOOLS_SAME_NOTE = "(Tool list unchanged - use the tools and call format given earlier in this chat.)"
 
 DELTA_HEADER = ("[CONTINUATION of the same task. Only NEW messages since your last "
@@ -84,6 +91,8 @@ def pick(nonsys, state, bound_url, rollover=DELTA_ROLLOVER):
         return "RESTART", None, "history-changed"
     if int(state.get("steps") or 0) >= rollover:
         return "RESTART", None, "rollover"
+    if DELTA_MAX_CHAT_CHARS and int(state.get("chars") or 0) >= DELTA_MAX_CHAT_CHARS:
+        return "RESTART", None, "chat-size"
     tail = list(nonsys[n:])
     while tail and tail[0].get("role") == "assistant":
         tail.pop(0)
@@ -100,11 +109,13 @@ def pick(nonsys, state, bound_url, rollover=DELTA_ROLLOVER):
     return "DELTA", tail, reason
 
 
-def record(state_db, sid, nonsys, conv_url, continued, th=""):
+def record(state_db, sid, nonsys, conv_url, continued, th="", sent_chars=0):
     prev = state_db.get(sid) or {}
-    steps = int(prev.get("steps") or 0) + 1 if (continued and prev.get("conv") == conv_url) else 0
+    same = bool(continued and prev.get("conv") == conv_url)
+    steps = int(prev.get("steps") or 0) + 1 if same else 0
+    chars = (int(prev.get("chars") or 0) if same else 0) + int(sent_chars or 0)
     state_db[sid] = {"n": len(nonsys), "hs": hashes(nonsys), "conv": conv_url,
-                     "steps": steps, "th": th, "ts": time.time()}
+                     "steps": steps, "th": th, "ts": time.time(), "chars": chars}
     return state_db[sid]
 
 

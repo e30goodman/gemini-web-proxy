@@ -1892,6 +1892,54 @@ def _load_session_db() -> None:
         _session_db.clear()
 
 
+# NEW-CHAT COUNTER: every time a request starts a NEW Gemini chat (= Gemini
+# loses the earlier context) one line goes to var/new_chats.log and the
+# per-day / per-reason counters to var/new_chats.json. Reasons: fresh (first turn
+# of a client session), lost (bound chat did not take the message),
+# restart:<why> (history-changed = the client compressed its history, rollover,
+# chat-size), no-session-id (client sent no session id -> every turn is new).
+NEW_CHATS_LOG = os.environ.get("GEMINI_NEW_CHATS_LOG", str(Path(__file__).parent / "var" / "new_chats.log"))
+NEW_CHATS_JSON = os.environ.get("GEMINI_NEW_CHATS_JSON", str(Path(__file__).parent / "var" / "new_chats.json"))
+
+
+def _count_new_chat(session_id, reason: str) -> None:
+    try:
+        os.makedirs(os.path.dirname(NEW_CHATS_LOG), exist_ok=True)
+        day = time.strftime("%Y-%m-%d")
+        with open(NEW_CHATS_LOG, "a", encoding="utf-8") as f:
+            f.write("%s %s reason=%s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), session_id or "-", reason))
+        try:
+            d = json.load(open(NEW_CHATS_JSON, encoding="utf-8"))
+        except Exception:
+            d = {}
+        r = reason if reason.startswith("restart") else reason.split(":")[0]
+        day_d = d.setdefault(day, {})
+        day_d[r] = int(day_d.get(r, 0)) + 1
+        day_d["total"] = int(day_d.get("total", 0)) + 1
+        for k in sorted(d)[:-30]:  # keep 30 days
+            d.pop(k, None)
+        json.dump(d, open(NEW_CHATS_JSON, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    except Exception as exc:
+        log.warning("new-chat counter failed: %s", exc)
+
+
+# SESSION NOTE: the client's session id rides along with every prompt, so after
+# a context loss (new Gemini chat) the model can load the history itself with
+# the client's session_search tool (Hermes: READ mode by session_id).
+# GEMINI_SESSION_NOTE=0 turns it off.
+SESSION_NOTE_ENABLED = os.environ.get("GEMINI_SESSION_NOTE", "1") != "0"
+
+
+def _session_note(session_id, allowed_names) -> str:
+    if not (SESSION_NOTE_ENABLED and session_id):
+        return ""
+    if allowed_names and "session_search" in allowed_names:
+        return ("[Session id: %s. If earlier context of this task is missing in "
+                "this chat, load it on demand: call session_search with "
+                "{\"session_id\": \"%s\"} (reads this session's history).]" % (session_id, session_id))
+    return "[Session id: %s]" % session_id
+
+
 def _save_session_db() -> None:
     try:
         tmp = _SESSION_DB_FILE + ".tmp"
@@ -2418,8 +2466,11 @@ async def _chat_completions_inner(request: Request):
         _sys_msgs = [m for m in messages if isinstance(m, dict) and m.get("role") == "system"]
         _a, _dsys, _dconv = flatten_messages(_sys_msgs + _delta_tail, tools, force_name=force_name)
         _dsys = _strip_system_keep_tools(_dsys, bool(tools))
-        if (not gemini_delta.DELTA_SCHEMAS_ALWAYS and _delta_db.get(session_id, {}).get("th")
-                == gemini_delta.tools_hash(tools)):
+        _dst = _delta_db.get(session_id, {})
+        _every = gemini_delta.DELTA_SCHEMAS_EVERY
+        _reminder = bool(_every and (int(_dst.get("steps") or 0) + 1) % _every == 0)
+        if (not gemini_delta.DELTA_SCHEMAS_ALWAYS and not _reminder
+                and _dst.get("th") == gemini_delta.tools_hash(tools)):
             _dsys = gemini_delta.TOOLS_SAME_NOTE
         prompt = "\n\n".join(p for p in (gemini_delta.DELTA_HEADER, _dsys, _dconv) if p)
 
@@ -2448,6 +2499,9 @@ async def _chat_completions_inner(request: Request):
                        "e.g. {\"tool_call\": {\"name\": \"terminal\", \"arguments\": "
                        "{\"command\": \"uptime\"}}} - with real values for this task. "
                        "Hermes will run it and send back [Tool result].")
+        _sn = _session_note(session_id, allowed_names)
+        if _sn and _sn not in prompt:
+            prompt = prompt + "\n\n" + _sn
         MITNIK_VIBE = os.environ.get("GEMINI_MITNIK_VIBE", "")
         if MITNIK_VIBE:
             prompt = (MITNIK_VIBE + "\n\n" + prompt).strip()
@@ -2522,11 +2576,20 @@ async def _chat_completions_inner(request: Request):
                     gemini_delta.save_state(_ddb)
                 prompt = full_prompt
                 text = await generate_via_atspi_bridge(activation_text, prompt, session_id=session_id)
+            if text:
+                if not session_id:
+                    _count_new_chat(None, "no-session-id")
+                elif _lost:
+                    _count_new_chat(session_id, "lost")
+                elif not _is_continue:
+                    _count_new_chat(session_id, ("restart:" + _delta_reason)
+                                    if _delta_mode == "RESTART" else "fresh")
             if _delta_on and text and _session_db.get(session_id):
                 _ddb = gemini_delta.load_state()
                 _st = gemini_delta.record(_ddb, session_id, _nonsys, _session_db.get(session_id),
                                           continued=_is_continue and not _lost,
-                                          th=gemini_delta.tools_hash(tools))
+                                          th=gemini_delta.tools_hash(tools),
+                                          sent_chars=len(prompt))
                 gemini_delta.save_state(_ddb)
                 gemini_delta.log_line("SENT", session_id,
                                       mode="FULL" if _lost else _delta_mode, msgs=len(_nonsys),

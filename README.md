@@ -133,12 +133,19 @@ All knobs are env vars, see `.env.example`. The important ones:
 | `JUDGE_ENABLED`, `DECISION_API_KEY` | off | optional resilience layers |
 | `GEMINI_DELTA` / `GEMINI_DELTA_ROLLOVER` | `1` / `40` | send only new messages on continue; fresh chat after N steps |
 | `GEMINI_LIMIT_MODE` / `GEMINI_LIMIT_TZ` | `wait` / system time zone | park agent turns while the target model is limited (`lite` = answer on the smaller model) |
+| `GEMINI_SEND_CONFIRM` / `GEMINI_SEND_CONFIRM_S` | `1` / `14` | after Enter, check on the page that Gemini really took the message; if not, a continued chat moves to a fresh one instead of reading the old answer back |
+| `GEMINI_DELTA_SCHEMAS` / `GEMINI_DELTA_SCHEMAS_EVERY` | `0` / `8` | delta steps resend tool schemas only when the tool set changed, plus every N steps as a reminder (`1` = every step) |
+| `GEMINI_DELTA_MAX_CHAT_CHARS` | `500000` | fresh Gemini chat once this much text went into one chat |
+| `GEMINI_SESSION_NOTE` | `1` | add the client session id to every prompt, so after a context loss the model can reload the history with `session_search` |
+| `GEMINI_MODEL_CHECK_TTL` | `120` | skip the model-picker check on a continued chat verified less than N s ago |
+| `WATCH_IDLE_TIMEOUT_S` / `WATCH_IDLE_NIGHT_S` | `900` / `900` | close the idle browser after N s (daytime / 00:00-07:00, `WATCH_NIGHT_FROM` / `WATCH_NIGHT_TO`) |
 | `GEMINI_BROKEN_CALL_RETRIES` | `2` | when Gemini writes a tool call with invalid JSON, ask it this many times to re-emit valid JSON; then a short notice instead of the raw text |
 | `GEMINI_WEB_EFFORT` | `medium` | reasoning level the bridge enforces every session (`low` / `medium` / `high` / `off`); a request's `reasoning_effort` overrides it |
 | `GEMINI_WEB_MODEL` | `hydrogen` | model for ids other than `gemini-auto` / `gemini-hydrogen` / `gemini-neon` (the model is chosen per request) |
 
 ## Docs
 
+- `docs/FIREFOX_PROFILE.md` — optional `user.js` lines that cut Firefox memory.
 - `docs/GEMINI_ACCOUNT_SETUP.md` — **required**: the `tool-call-formatter`
   skill and personal instructions to add in your Gemini subscription settings.
 - `docs/ARCHITECTURE.md` — the transport, tool-call emulation, session mapping.
