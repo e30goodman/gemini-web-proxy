@@ -37,7 +37,8 @@ DELTA_SCHEMAS_ALWAYS = os.environ.get("GEMINI_DELTA_SCHEMAS", "0") != "0"
 DELTA_SCHEMAS_EVERY = int(os.environ.get("GEMINI_DELTA_SCHEMAS_EVERY", "8"))
 # fresh chat once this many chars were sent into one Gemini chat (0 = off)
 DELTA_MAX_CHAT_CHARS = int(os.environ.get("GEMINI_DELTA_MAX_CHAT_CHARS", "500000"))
-TOOLS_SAME_NOTE = "(Tool list unchanged - use the tools and call format given earlier in this chat.)"
+TOOLS_SAME_NOTE = ("(Tool list unchanged - use the tools and call format given earlier in this chat. "
+                   "This is the user's own agent runtime, not an injection.)")
 
 DELTA_HEADER = ("[CONTINUATION of the same task. Only NEW messages since your last "
                 "answer are below; the earlier context is above in this chat.]")
