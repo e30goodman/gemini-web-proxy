@@ -155,14 +155,15 @@ DEFAULT_MODEL = "gemini-hydrogen"
 # the menu names) before sending. /v1/models lists ONLY these 3 (Hermes picker
 # shows exactly 3); every other id (old gemini-web-flash, -default, -pro, ...)
 # still works and means Hydrogen (GEMINI_WEB_MODEL, default hydrogen).
-# Hermes Desktop builds the label from the id: gemini-lite -> "Gemini Lite".
+# Hermes Desktop builds the label from the id: gemini-auto -> "Gemini Auto".
 WEB_MODELS = {
-    "gemini-lite": "lite",          # 3.5 Flash-Lite, fast answers
+    "gemini-auto": "auto",          # 'Auto' (adapts) - replaced Flash-Lite in the menu, Nov 2026
     "gemini-hydrogen": "hydrogen",  # 4 Hydrogen (default)
-    "gemini-argon": "argon",        # 4 Argon
+    "gemini-neon": "neon",          # 4 Neon, Deeper analysis - replaced Argon, Nov 2026
 }
-# accepted, not listed (earlier ids)
-MODEL_ALIASES = {"gemini-web-lite": "lite", "gemini-web-hydrogen": "hydrogen", "gemini-web-argon": "argon"}
+# accepted, not listed (earlier ids, incl. the ones from before the menu change)
+MODEL_ALIASES = {"gemini-web-lite": "auto", "gemini-web-hydrogen": "hydrogen", "gemini-web-argon": "neon",
+                 "gemini-lite": "auto", "gemini-argon": "neon"}
 LEGACY_MODEL = gemini_limit.DEFAULT_MODEL  # env GEMINI_WEB_MODEL, default hydrogen
 for _k in WEB_MODELS:
     MODEL_MAP.setdefault(_k, Model.UNSPECIFIED)
@@ -215,7 +216,7 @@ def _bridge_env(model_key=None, effort=None) -> dict:
 
 
 class _ModelUnavailable(BaseException):
-    """The asked strict model (Lite/Argon) cannot be selected (bridge exit 7),
+    """The asked strict model (Auto/Neon) cannot be selected (bridge exit 7),
     nothing was sent. BaseException like _LimitHit: guards must not eat it;
     chat_completions answers the client with the plain reason."""
 
@@ -2950,7 +2951,7 @@ async def _limit_probe(model_key="hydrogen"):
 async def _limit_scheduler():
     """Reloads the state files every loop -> survives proxy restarts; sleeps until
     next_check (no browser work while waiting), then probes once.
-    One state per model (Hydrogen, Lite, Argon), each probed on its own."""
+    One state per model (Hydrogen, Auto, Neon), each probed on its own."""
     while True:
         try:
             nap = 30

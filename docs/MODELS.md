@@ -10,15 +10,16 @@ the middle of it.
 
 | Model id          | Label in Hermes  | Gemini menu item matched by | key        |
 |-------------------|------------------|-----------------------------|------------|
-| `gemini-lite`     | Gemini Lite      | `Flash-Lite` (3.5)          | `lite`     |
+| `gemini-auto`     | Gemini Auto      | `Auto` (adapts)             | `auto`     |
 | `gemini-hydrogen` | Gemini Hydrogen  | `Hydrogen` (4, default)     | `hydrogen` |
-| `gemini-argon`    | Gemini Argon     | `Argon` (4)                 | `argon`    |
+| `gemini-neon`     | Gemini Neon      | `Neon` (4, Deeper analysis) | `neon`     |
 
 - `/v1/models` lists only these 3 (the Hermes picker shows exactly 3). Hermes
   has no display-name field for a model: Desktop builds the label from the id
-  (`gemini-lite` -> "Gemini Lite"), so the ids are the names.
-- `gemini-web-lite` / `gemini-web-hydrogen` / `gemini-web-argon` are accepted
-  as aliases, not listed.
+  (`gemini-auto` -> "Gemini Auto"), so the ids are the names.
+- Old ids are accepted as aliases, not listed: `gemini-auto` / `gemini-web-lite`
+  -> Auto, `gemini-neon` / `gemini-web-argon` -> Neon, `gemini-web-hydrogen`.
+  (In Nov 2026 Gemini replaced Flash-Lite with Auto and Argon with Neon.)
 - Every other id still works and means Hydrogen: `gemini-web-flash`,
   `gemini-web-default`, `gemini-web-pro`, `gemini-web-flash-advanced`,
   `gemini-web-pro-advanced`, `gemini-web-proxy/<id>`, no model. (Env
@@ -42,38 +43,38 @@ the middle of it.
 
 ## UI language
 
-The model names (`Hydrogen`, `Flash-Lite`, `Argon`) are the same in every UI
-language. Subtitles and upsell words default to English; for another UI
+The model names (`Hydrogen`, `Neon`) are the same in every UI language;
+`Auto` is translated (override `GEMINI_UI_AUTO_ITEM_RE`). Subtitles and upsell words default to English; for another UI
 language override them (regexes):
 
 | Var | Default | What |
 |---|---|---|
 | `GEMINI_UI_HYDROGEN_DESC_RE` | `Everyday` | Hydrogen item subtitle |
-| `GEMINI_UI_LITE_DESC_RE` | `Fast answer\|Quick answer` | Flash-Lite item subtitle |
-| `GEMINI_UI_ARGON_DESC_RE` | `Code (and\|&) analysis\|Coding` | Argon item subtitle |
+| `GEMINI_UI_AUTO_ITEM_RE` | `\bAuto\b` | Auto item name (translated in other UI languages) |
+| `GEMINI_UI_AUTO_DESC_RE` | `Adapts` | Auto item subtitle |
+| `GEMINI_UI_NEON_DESC_RE` | `Deeper analysis` | Neon item subtitle |
 | `GEMINI_UI_LOCKED_RE` | `(Upgrade\|Subscribe\|Get Google AI\|Google AI (Pro\|Ultra)\|Unlock)` | upsell words of a locked item |
 | `GEMINI_UI_LIMIT_ITEM_RE` | see `docs/RESILIENCE.md` | limit text of a menu item |
 | `GEMINI_MODEL_UNAVAILABLE_TEXT` | `{model} is not available on this account` | answer when a strict model cannot be used |
 
 Override the regexes for a non-English UI.
 
-## Strict models (Lite, Argon)
+## Strict models (Auto, Neon)
 
 Hydrogen keeps the fail-open behaviour (answer on whatever the page has, with
-the model-drop notice). Lite and Argon are strict: if the item is missing,
+the model-drop notice). Auto and Neon are strict: if the item is missing,
 locked (no subscription: upsell words or disabled state) or does not take, the
 bridge sends nothing and exits 7, and the client gets a normal answer with the
-plain reason, e.g. `Argon is not available on this account`. Argon was not
-tested live (no subscription on the test account), only offline
-.
+plain reason, e.g. `Neon is not available on this account`. Auto was tested live; Neon is locked on the test account (no
+subscription), so only the locked path was tested live.
 
 ## Limits (see docs/RESILIENCE.md, LIMIT WAIT)
 
 One limit state per model: Hydrogen keeps `src/var/gemini_limit_state.json`,
 the others get `gemini_limit_state.<key>.json`. A Hydrogen limit does not park
-Lite turns and the other way round. A limited Lite or Argon in an agent turn is
+Auto turns and the other way round. A limited Auto or Neon in an agent turn is
 parked and woken the same way as Hydrogen (the wake-up probe checks that model).
-The park notice names the model: `Gemini Flash-Lite hit its usage limit, ...`.
+The park notice names the model: `Gemini Neon hit its usage limit, ...`.
 
 ## Thinking level (see docs/EFFORT.md)
 
@@ -82,10 +83,10 @@ OpenAI-compatible provider, see `hermes-integration/provider_plugin.py`), else
 `reasoning.effort`, else `extra_body`. Gemini has low / medium / high; others
 map to the nearest: `none`, `minimal` -> low, `xhigh`, `max`, `ultra` -> high,
 `reasoning.enabled: false` -> low. Not sent -> `GEMINI_WEB_EFFORT` (default
-medium). All 3 models have the control (Lite too); a model without it ->
+medium). All 3 models have the control (Auto too); a model without it ->
 logged, the request continues.
 
-Verified live: `gemini-lite` without a level -> page on Flash-Lite, level set
+Verified live: `gemini-auto` without a level -> page on Auto, level set
 to medium; `gemini-hydrogen` with `reasoning_effort: high` -> page on Hydrogen,
 level high; an old id (`gemini-web-flash`) -> Hydrogen, medium.
 

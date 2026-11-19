@@ -901,7 +901,7 @@ def _limit_check(ok):
         if gemini_model.LAST_FAIL == "limit":
             return ok, gemini_model.LAST_LIMIT
         if gemini_model.LAST_FAIL and gemini_model.spec()[1].get("strict"):
-            return ok, ""   # Lite/Argon locked or missing: no park, exit 7 follows
+            return ok, ""   # Auto/Neon locked or missing: no park, exit 7 follows
         return ok, gemini_model.limit_info()   # Hydrogen: as in GD2 (page banner)
     lt = gemini_model.limit_banner()
     if gemini_limit.banner_active(lt):
@@ -921,7 +921,7 @@ def _limit_check(ok):
 
 
 def _model_unavailable(keep_open):
-    """A strict model (Lite, Argon) asked by the request could not be
+    """A strict model (Auto, Neon) asked by the request could not be
     selected -> send nothing, exit 7; the proxy answers the client with
     the plain reason instead of silently using another model."""
     import gemini_model

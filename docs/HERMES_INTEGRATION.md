@@ -27,9 +27,9 @@ custom_providers:
     model: gemini-hydrogen
     discover_models: false
     models:
-      gemini-lite: {context_length: 1000000}
+      gemini-auto: {context_length: 1000000}
       gemini-hydrogen: {context_length: 1000000}
-      gemini-argon: {context_length: 1000000}
+      gemini-neon: {context_length: 1000000}
 ```
 
 and the same 3 models under the named provider block:
@@ -41,13 +41,13 @@ providers:
     base_url: http://127.0.0.1:9658/v1
     discover_models: false
     models:
-      gemini-lite: {context_length: 1000000}
+      gemini-auto: {context_length: 1000000}
       gemini-hydrogen: {context_length: 1000000}
-      gemini-argon: {context_length: 1000000}
+      gemini-neon: {context_length: 1000000}
 ```
 
 Hermes has no display-name field for a model: Desktop builds the label from
-the id, so the picker shows "Gemini Lite" / "Gemini Hydrogen" / "Gemini Argon".
+the id, so the picker shows "Gemini Auto" / "Gemini Hydrogen" / "Gemini Neon".
 `discover_models: false` keeps the picker at exactly these 3 (`/v1/models`
 lists the same 3). Every other id still works and means Hydrogen (see
 `docs/MODELS.md`). The model is switched on the Gemini page per request, in the
@@ -79,7 +79,7 @@ generated image with vision before shipping it.
 ## 4. Model guard + tool-call formatter skill
 
 - `src/gemini_model.py` keeps the session on the model of the request
-  (`gemini-lite` / `gemini-hydrogen` / `gemini-argon`, default Hydrogen) and
+  (`gemini-auto` / `gemini-hydrogen` / `gemini-neon`, default Hydrogen) and
   switches it back when Google resets it, and reports the drop.
 - The account-level Gemini "skill tool-call-formatter" is what actually teaches
   Gemini the JSON tool-call envelope; the proxy just supplies the schemas. First

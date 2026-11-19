@@ -132,14 +132,14 @@ def empty():
             "checks": 0, "notified": {}, "cleared_at": None}
 
 
-# One state per model (key 'hydrogen' | 'lite' | 'argon'). Hydrogen keeps the old
-# file name (state survives the update); a Hydrogen limit does not park Lite turns
+# One state per model (key 'hydrogen' | 'auto' | 'neon'; old 'lite' / 'argon' kept).
+# Hydrogen keeps the old file name (state survives the update); a Hydrogen limit does not park Auto turns
 # and the other way round.
-NAMES = {"hydrogen": "Hydrogen", "lite": "Flash-Lite", "argon": "Argon"}
+NAMES = {"hydrogen": "Hydrogen", "auto": "Auto", "neon": "Neon", "lite": "Flash-Lite", "argon": "Argon"}
 
 
 def _key(name):
-    """Model key for a key or display name ('Flash-Lite' -> 'lite')."""
+    """Model key for a key or display name ('Neon' -> 'neon')."""
     n = (name or "").strip().lower()
     return next((k for k, v in NAMES.items() if n in (k, v.lower())), n) or "hydrogen"
 

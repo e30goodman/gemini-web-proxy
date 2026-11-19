@@ -22,11 +22,16 @@ DISPLAY = os.environ.get('DISPLAY', ':2')
 MODELS = {
     'hydrogen': {'name': 'Hydrogen', 'item': r'\bHydrogen\b',
                  'desc': os.environ.get('GEMINI_UI_HYDROGEN_DESC_RE', r'Everyday'), 'strict': False},
-    'lite': {'name': 'Flash-Lite', 'item': r'Flash[- ]?Lite',
-             'desc': os.environ.get('GEMINI_UI_LITE_DESC_RE', r'Fast answer|Quick answer'), 'strict': True},
-    'argon': {'name': 'Argon', 'item': r'\bArgon\b',
-              'desc': os.environ.get('GEMINI_UI_ARGON_DESC_RE', r'Code (and|&) analysis|Coding'), 'strict': True},
+    # Menu change (Nov 2026): Flash-Lite -> 'Auto' (adapts to your needs),
+    # Argon -> '4 Neon' (Deeper analysis). 'Auto' is a translated word, so its
+    # item regex is configurable too (GEMINI_UI_AUTO_ITEM_RE).
+    'auto': {'name': 'Auto', 'item': os.environ.get('GEMINI_UI_AUTO_ITEM_RE', r'\bAuto\b'),
+             'desc': os.environ.get('GEMINI_UI_AUTO_DESC_RE', r'Adapts'), 'strict': True},
+    'neon': {'name': 'Neon', 'item': r'\bNeon\b',
+             'desc': os.environ.get('GEMINI_UI_NEON_DESC_RE', r'Deeper analysis'), 'strict': True},
 }
+# old keys / names (menu before Nov 2026) -> current keys
+OLD_KEYS = {'lite': 'auto', 'flash-lite': 'auto', 'argon': 'neon'}
 # a locked (no subscription) item: upsell words in its name or a disabled state
 LOCKED_RE = re.compile(os.environ.get('GEMINI_UI_LOCKED_RE',
     r'(Upgrade|Subscribe|Get Google AI|Google AI (Pro|Ultra)|Unlock)'), re.I)
@@ -35,9 +40,10 @@ LAST_FAIL = ''  # why the last ensure_model failed: limit | locked | missing | v
 
 
 def spec(target=None):
-    '''(key, spec) for a model key ('lite') or menu name ('Flash-Lite'); unknown
+    '''(key, spec) for a model key ('auto') or menu name ('Neon'); unknown
     names get an ad-hoc spec that matches the name literally.'''
     t = (target or TARGET or 'Hydrogen').strip()
+    t = OLD_KEYS.get(t.lower(), t)
     if t.lower() in MODELS:
         return t.lower(), MODELS[t.lower()]
     for k, sp in MODELS.items():
@@ -176,7 +182,7 @@ def _limit_of(sp, names):
 
 def ensure_model(target=None, tries=3):
     """Returns True when the picker shows the target model. target = model key
-    ('hydrogen', 'lite', 'argon') or menu name; default TARGET (env GEMINI_WEB_MODEL).
+    ('hydrogen', 'auto', 'neon') or menu name; default TARGET (env GEMINI_WEB_MODEL).
     On False, LAST_FAIL says why (limit / locked / missing / verify / picker)."""
     global LAST_LIMIT, LAST_FAIL
     key, sp = spec(target)

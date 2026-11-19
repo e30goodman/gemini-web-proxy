@@ -150,11 +150,11 @@ re-check within 20 s). Log: `src/var/limit.log` (`LIMIT`, `PARK`, `RESTART`,
 One notice per event: in wait mode a limit drop does not add the generic
 model-drop / back-on-target notice on top of the park and wake notices.
 
-Per model: the "target model" is the model of the request (Lite / Hydrogen /
-Argon, see `docs/MODELS.md`). One state file per model (Hydrogen keeps
+Per model: the "target model" is the model of the request (Auto / Hydrogen /
+Neon, see `docs/MODELS.md`). One state file per model (Hydrogen keeps
 `gemini_limit_state.json`, the others `gemini_limit_state.<key>.json`), the
 scheduler probes each limited model on its own, and a Hydrogen limit does not
-park Lite turns. The page banner is checked against the asked model's own menu
+park Auto turns. The page banner is checked against the asked model's own menu
 item when that model is not Hydrogen. The park notice names the model.
 
 Buffer precedence: the DOM-watcher buffer replaces the bridge text only when

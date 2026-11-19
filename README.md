@@ -30,7 +30,7 @@ project is that transport, packaged as a service.
   **EFFORT GUARD** (every bridge session re-checks the model's reasoning level,
   which Gemini web keeps resetting to Low, and sets `GEMINI_WEB_EFFORT`,
   default Medium — see `docs/EFFORT.md`), **MODELS** (per-request model
-  `gemini-lite` / `gemini-hydrogen` / `gemini-argon` and thinking level from the
+  `gemini-auto` / `gemini-hydrogen` / `gemini-neon` and thinking level from the
   client's `reasoning_effort`, switched on the page before sending, one limit
   state per model — see `docs/MODELS.md`), streaming SSE, mechanical rate limiting, judge/decision hooks.
 - **`src/gemini_atspi_bridge.py`** — drives the real Firefox on a headless
@@ -135,7 +135,7 @@ All knobs are env vars, see `.env.example`. The important ones:
 | `GEMINI_LIMIT_MODE` / `GEMINI_LIMIT_TZ` | `wait` / system time zone | park agent turns while the target model is limited (`lite` = answer on the smaller model) |
 | `GEMINI_BROKEN_CALL_RETRIES` | `2` | when Gemini writes a tool call with invalid JSON, ask it this many times to re-emit valid JSON; then a short notice instead of the raw text |
 | `GEMINI_WEB_EFFORT` | `medium` | reasoning level the bridge enforces every session (`low` / `medium` / `high` / `off`); a request's `reasoning_effort` overrides it |
-| `GEMINI_WEB_MODEL` | `hydrogen` | model for ids other than `gemini-lite` / `gemini-hydrogen` / `gemini-argon` (the model is chosen per request) |
+| `GEMINI_WEB_MODEL` | `hydrogen` | model for ids other than `gemini-auto` / `gemini-hydrogen` / `gemini-neon` (the model is chosen per request) |
 
 ## Docs
 

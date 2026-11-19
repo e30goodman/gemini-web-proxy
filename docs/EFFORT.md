@@ -44,4 +44,4 @@ while the proxy is running).
 The level comes per request from the client (`reasoning_effort`, see
 `docs/MODELS.md`): low / medium / high, `none` / `minimal` -> low, `xhigh` /
 `max` / `ultra` -> high. Not sent -> `GEMINI_WEB_EFFORT` (default medium).
-Works on all 3 models (Lite has the control too).
+Works on all 3 models (Auto has the control too).
