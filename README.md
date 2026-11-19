@@ -134,7 +134,10 @@ All knobs are env vars, see `.env.example`. The important ones:
 | `GEMINI_DELTA` / `GEMINI_DELTA_ROLLOVER` | `1` / `40` | send only new messages on continue; fresh chat after N steps |
 | `GEMINI_LIMIT_MODE` / `GEMINI_LIMIT_TZ` | `wait` / system time zone | park agent turns while the target model is limited (`lite` = answer on the smaller model) |
 | `GEMINI_SEND_CONFIRM` / `GEMINI_SEND_CONFIRM_S` | `1` / `14` | after Enter, check on the page that Gemini really took the message; if not, a continued chat moves to a fresh one instead of reading the old answer back |
-| `GEMINI_DELTA_SCHEMAS` / `GEMINI_DELTA_SCHEMAS_EVERY` | `0` / `8` | delta steps resend tool schemas only when the tool set changed, plus every N steps as a reminder (`1` = every step) |
+| `GEMINI_DELTA_SCHEMAS` / `GEMINI_DELTA_SCHEMAS_EVERY` | `1` / `8` | `1` = every delta step resends the tool schemas (otherwise Gemini can "forget" its tools mid-task); `0` = only when the tool set changed, plus every N steps as a reminder |
+| `GEMINI_REFUSAL_ROUNDS` | `2` | how many times a refusal / fake "no tools" excuse / Gemini internal error is retried (internal errors and "injection" refusals go to a fresh chat) |
+| `GEMINI_SKILL_MODE` | `chip` | how the tool-call skill is attached: `chip` (@ menu), `text` (old `/skill` trigger) or `none`; a `skill_mode` file next to the bridge overrides it without a restart |
+| `GEMINI_CHIP_ACTIVATION_TURN` | `1` | on a fresh chat the skill chip first gets its own short turn, then the task |
 | `GEMINI_DELTA_MAX_CHAT_CHARS` | `500000` | fresh Gemini chat once this much text went into one chat |
 | `GEMINI_SESSION_NOTE` | `1` | add the client session id to every prompt, so after a context loss the model can reload the history with `session_search` |
 | `GEMINI_MODEL_CHECK_TTL` | `120` | skip the model-picker check on a continued chat verified less than N s ago |

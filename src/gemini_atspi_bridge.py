@@ -1353,9 +1353,43 @@ def main():
     # no text trigger, no separate activation turn (fresh chats save ~12 s).
     # GEMINI_SKILL_MODE=text = old behaviour; failure -> old behaviour.
     _chip = False
-    if activation and not images and os.environ.get("GEMINI_SKILL_MODE", "chip") != "text":
-        _chip = attach_skill(wid, activation.lstrip("/").split()[0])
-        if _chip:
+    _chip_turn = False
+    # GEMINI_SKILL_MODE: chip (default) | text (old "/skill" text trigger) | none (no
+    # skill at all - the call format lives in the prompt). File skill_mode next to
+    # this script overrides the env (switch without a proxy restart).
+    _skill_mode = os.environ.get("GEMINI_SKILL_MODE", "chip")
+    try:
+        _smf = os.path.join(os.path.dirname(os.path.abspath(__file__)), "skill_mode")
+        if os.path.exists(_smf):
+            _skill_mode = open(_smf).read().strip() or _skill_mode
+    except Exception:
+        pass
+    if activation and _skill_mode == "none":
+        print("[skill] mode none: no skill trigger", file=sys.stderr)
+        activation = ""
+        activation_merged = True
+    if activation and not images and _skill_mode != "text":
+        _skill = activation.lstrip("/").split()[0]
+        _chip = attach_skill(wid, _skill)
+        if _chip and not continue_conv and os.environ.get("GEMINI_CHIP_ACTIVATION_TURN", "1") != "0":
+            # on a FRESH chat the skill gets its own short turn
+            # first (seen live again: chip + a 60k Hermes prompt in one message ->
+            # "tool call limit 0"; the separate activation turn cured that before).
+            try:
+                sh(["xdotool", "key", "--clearmodifiers", "End"])
+                sh(["xdotool", "type", "--clearmodifiers", "--delay", "10",
+                    os.environ.get("GEMINI_CHIP_ACTIVATION_TEXT", "Activate this skill. Reply with one word: ready.")])
+                time.sleep(0.3)
+                sh(["xdotool", "key", "--clearmodifiers", "Return"])
+                _t_ack = time.time()
+                time.sleep(0.5)
+                wait_idle(min_rated=1, timeout=45)
+                print("[skill] activation turn done in %.1fs" % (time.time() - _t_ack), file=sys.stderr)
+                _chip_turn = True
+                _chip = attach_skill(wid, _skill)  # chip on the task message too
+            except Exception as _ce:
+                print("[skill] activation turn failed: %s" % _ce, file=sys.stderr)
+        if _chip or _chip_turn:
             activation_merged = True
             activation = ""
     if activation:
@@ -1431,7 +1465,7 @@ def main():
         if not keep_open:
             teardown()
         sys.exit(_code)
-    response = read_response(timeout=timeout, min_requests=2 if activation and not continue_conv and not activation_merged else 1)
+    response = read_response(timeout=timeout, min_requests=2 if (activation and not continue_conv and not activation_merged) or _chip_turn else 1)
     print(response.replace("\ufffc", ""))
 
     # Save the conv_id AFTER a real message has been sent: a freshly-created
