@@ -32,11 +32,11 @@ DELTA_PRUNE_S = 7 * 86400
 # Default 0 since Nov 2026: resending ~40k chars of schemas on EVERY step blew a
 # Gemini chat up until it stopped taking messages. Now: schemas when the tool
 # set changed, plus a reminder every GEMINI_DELTA_SCHEMAS_EVERY steps (0 = never).
-# "1" = schemas on every step. Back to default "1" (Nov 19): without them Gemini
-# "forgot" its tools mid-task on long agent runs; the chat-size rollover
-# (GEMINI_DELTA_MAX_CHAT_CHARS) now keeps the chat from blowing up.
-DELTA_SCHEMAS_ALWAYS = os.environ.get("GEMINI_DELTA_SCHEMAS", "1") != "0"
-DELTA_SCHEMAS_EVERY = int(os.environ.get("GEMINI_DELTA_SCHEMAS_EVERY", "8"))
+# "1" = schemas on every step - NOT recommended: ~40k chars per step fill the chat
+# to the rollover limit in ~10 steps and the restart costs context. Refusal retries
+# carry the schemas anyway.
+DELTA_SCHEMAS_ALWAYS = os.environ.get("GEMINI_DELTA_SCHEMAS", "0") != "0"
+DELTA_SCHEMAS_EVERY = int(os.environ.get("GEMINI_DELTA_SCHEMAS_EVERY", "4"))
 # fresh chat once this many chars were sent into one Gemini chat (0 = off)
 DELTA_MAX_CHAT_CHARS = int(os.environ.get("GEMINI_DELTA_MAX_CHAT_CHARS", "500000"))
 TOOLS_SAME_NOTE = ("(Tool list unchanged - use the tools and call format given earlier in this chat. "

@@ -1465,7 +1465,20 @@ def main():
         if not keep_open:
             teardown()
         sys.exit(_code)
+    # Seen live: an AT-SPI call inside read_response can block forever (the deadline
+    # is only checked between tree walks) and the bridge hangs until the proxy kills
+    # it. Hard watchdog: past timeout + 45 s the bridge exits by itself - 4 on
+    # continue (the proxy reopens the task in a fresh chat), 9 on a fresh chat.
+    import threading as _th
+    def _read_watchdog():
+        sys.stderr.write("[read] WATCHDOG: read_response stuck > %ds - exit\n" % (int(timeout) + 45))
+        sys.stderr.flush()
+        os._exit(4 if continue_conv else 9)
+    _wd = _th.Timer(int(timeout) + 45, _read_watchdog)
+    _wd.daemon = True
+    _wd.start()
     response = read_response(timeout=timeout, min_requests=2 if (activation and not continue_conv and not activation_merged) or _chip_turn else 1)
+    _wd.cancel()
     print(response.replace("\ufffc", ""))
 
     # Save the conv_id AFTER a real message has been sent: a freshly-created
