@@ -965,6 +965,9 @@ def attach_skill(wid, name):
     return False
 
 
+_STALL_READS = int(os.environ.get("GEMINI_STALL_READS", "40"))
+
+
 def read_response(timeout=40, poll=0.6, min_requests=1):
     import pyatspi
 
@@ -983,7 +986,7 @@ def read_response(timeout=40, poll=0.6, min_requests=1):
             iface = node.get_interfaces()
         except Exception:
             return
-        if btns is not None and role in ("push button", "toggle button"):  # [claude] rating buttons are toggles
+        if btns is not None and role in ("button", "push button", "toggle button"):  # [claude] rating buttons are toggles
             try:
                 btns.append(node.name or "")
             except Exception:
@@ -1087,12 +1090,18 @@ def read_response(timeout=40, poll=0.6, min_requests=1):
         if text_now and n_requests >= min_requests:
             _voice = any(any(b.startswith(v) for v in UI_VOICE_BUTTON) for b in btns)
             _rated = sum(1 for b in btns if b in UI_GOOD_RESPONSE)
-            if _voice and _rated >= n_requests:
+            if _voice and _rated >= n_requests and not any(
+                    b.lower().startswith(("\u043e\u0441\u0442\u0430\u043d\u043e\u0432", "stop")) for b in btns):
                 result_blocks = blocks
                 break
+        # Seen live: Gemini printed 24 chars of a tool call, paused ~20 s, then the
+        # rest - two equal reads took the stub for the whole answer. While the Stop
+        # button is on the page the answer is NOT finished: equal reads only count
+        # after a long stall (GEMINI_STALL_READS polls).
+        _generating = any(b.lower().startswith(("\u043e\u0441\u0442\u0430\u043d\u043e\u0432", "stop")) for b in btns)
         if text_now and len(text_now) == last_len:
             stable_count += 1
-            if stable_count >= 2:
+            if stable_count >= (_STALL_READS if _generating else 2):
                 result_blocks = blocks
                 break
         else:

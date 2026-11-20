@@ -3076,7 +3076,26 @@ async def _chat_completions_inner(request: Request):
     if tools and allowed_names and not tool_calls and USE_ATSPI_BRIDGE \
             and _looks_like_broken_call(text) and not _broken_failed:
         tool_calls = _salvage_call(text, allowed_names)
-        if not tool_calls:
+        for _bc2 in range(1, (0 if tool_calls else BROKEN_CALL_RETRIES) + 1):
+            # e.g. a stub of a call ('{"tool_call": {"name": "') - ask once more
+            try:
+                _bt2 = (await generate_via_atspi_bridge(
+                    activation_text, _broken_call_prompt(allowed_names),
+                    session_id=session_id)).strip()
+            except Exception as exc:
+                log.warning("broken-call (late) re-request failed: %.200s", exc)
+                break
+            tool_calls = (parse_tool_calls(_bt2, allowed_names) if _bt2 else []) \
+                or _salvage_call(_bt2, allowed_names)
+            if tool_calls:
+                log.info("broken-call (late): retry #%d fixed -> %s", _bc2,
+                         [t["name"] for t in tool_calls])
+                text = _bt2
+                break
+            if _bt2 and not _looks_like_broken_call(_bt2):
+                text = _bt2
+                break
+        if not tool_calls and _looks_like_broken_call(text):
             log.info("broken-call after refusal rounds: plain notice to client")
             text = ("Warning (bridge): Gemini returned a tool call with broken JSON "
                     "several times; the call was dropped. Repeat the task or switch model.")
