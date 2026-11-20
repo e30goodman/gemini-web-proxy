@@ -1255,9 +1255,9 @@ MATH_MANGLED_PROMPT = (
 SALVAGE_ENABLED = os.environ.get("GEMINI_SALVAGE_CALL", "1") != "0"
 _SALVAGE_RE = re.compile(
     r'\{\s*"tool_call"\s*:\s*\{\s*"name"\s*:\s*"([\w.-]+)"\s*,\s*"arguments"\s*:\s*'
-    r'\{\s*"(\w+)"\s*:\s*"(.*)"\s*\}\s*\}\s*\}\s*(?:```)?\s*$', re.S)
+    r'\{\s*"(\w+)"\s*:\s*"(.*)"((?:\s*,\s*"\w+"\s*:\s*(?:-?\d+(?:\.\d+)?|true|false|null))*)\s*\}\s*\}\s*\}\s*(?:```)?\s*$', re.S)
 _SALVAGE_LEGACY_RE = re.compile(
-    r'TOOL_CALL:\s*([\w.-]+)\s*(?:arguments\s*:)?\s*\{\s*"(\w+)"\s*:\s*"(.*)"\s*\}\s*(?:```)?\s*$',
+    r'TOOL_CALL:\s*([\w.-]+)\s*(?:arguments\s*:)?\s*\{\s*"(\w+)"\s*:\s*"(.*)"((?:\s*,\s*"\w+"\s*:\s*(?:-?\d+(?:\.\d+)?|true|false|null))*)\s*\}\s*(?:```)?\s*$',
     re.S | re.I)
 
 
@@ -1268,12 +1268,18 @@ def _salvage_call(text: str, allowed_names) -> list[dict]:
     if not m:
         return []
     name, key, raw = m.group(1), m.group(2), m.group(3)
+    extra = {}
+    if m.group(4):  # trailing simple arguments: , "timeout": 30
+        try:
+            extra = json.loads("{" + m.group(4).strip().lstrip(",") + "}")
+        except Exception:
+            return []
     if allowed_names and name not in allowed_names:
         return []
     if re.search(r'"\s*,\s*"\w+"\s*:', raw) or _MATH_MANGLED_RE.search(raw):
         return []  # looks like several arguments / mangled -> not unambiguous
     log.info("broken-call: salvaged %s.%s (%d chars, unescaped quotes)", name, key, len(raw))
-    return [{"name": name, "arguments": json.dumps({key: raw}, ensure_ascii=False)}]
+    return [{"name": name, "arguments": json.dumps({key: raw, **extra}, ensure_ascii=False)}]
 
 
 def _broken_call_prompt(allowed_names) -> str:

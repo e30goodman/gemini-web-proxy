@@ -786,9 +786,11 @@ def last_request_signature():
                 pass
     walk(app)
     last = None
+    n_req = 0  # identical text sent twice in a row must still count as a new request
     for i, (role, t) in enumerate(out):
         if role == "heading" and any(t.strip().startswith(h) for h in UI_REQUEST_HEADING):
             last = i
+            n_req += 1
     if last is None:
         return ""
     parts = [out[last][1]]
@@ -796,7 +798,7 @@ def last_request_signature():
         if role == "entry" or (role == "heading" and any(t.strip().startswith(h) for h in UI_ANSWER_HEADING)):
             break
         parts.append(t)
-    return re.sub(r"\s+", "", "".join(parts).replace("\ufffc", ""))
+    return "%d|" % n_req + re.sub(r"\s+", "", "".join(parts).replace("\ufffc", ""))
 
 
 def confirm_sent(prev_sig, timeout=None):
