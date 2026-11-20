@@ -726,6 +726,58 @@ def ui_idle_state():
     return idle, sum(1 for x in names if x in UI_GOOD_RESPONSE)
 
 
+def stop_generation():
+    """Follow-up message while Gemini is still answering (the client interrupted its
+    request and sent a new one): press the Stop button if the UI shows one. Best
+    effort - the caller waits for idle anyway. Returns the button name or ''."""
+    import pyatspi
+    found = []
+
+    def walk(n):
+        try:
+            if n.getRoleName() in ("button", "push button", "toggle button"):  # plain buttons read as "button"
+                nm = (n.name or "")
+                low = nm.lower()
+                if low.startswith(("\u043e\u0441\u0442\u0430\u043d\u043e\u0432", "stop")):
+                    found.append((nm, n))
+            for i in range(n.childCount):
+                walk(n.getChildAtIndex(i))
+        except Exception:
+            pass
+    for a in pyatspi.Registry.getDesktop(0):
+        try:
+            if a.name == "Firefox":
+                walk(a)
+        except Exception:
+            pass
+    for nm, node in found:
+        try:
+            node.queryAction().doAction(0)
+            return nm
+        except Exception:
+            continue
+    return ""
+
+
+def ensure_idle_before_send(timeout=75):
+    """On a continued chat: never paste into a chat that is still generating (the
+    Enter is ignored or the texts mix). Stop the old answer, then wait for idle."""
+    if os.environ.get("GEMINI_STOP_BEFORE_SEND", "1") == "0":
+        return
+    st = ui_idle_state()
+    if st[0]:
+        return
+    time.sleep(1.0)  # one re-check: a busy accessibility tree also reads as "not idle"
+    st = ui_idle_state()
+    if st[0]:
+        return
+    t0 = time.time()
+    nm = stop_generation()
+    print("[stop] chat was still generating: stop button %r" % nm, file=sys.stderr)
+    ok = wait_idle(min_rated=0, timeout=timeout)
+    print("[stop] idle=%s after %.1fs" % (ok, time.time() - t0), file=sys.stderr)
+
+
 def wait_idle(min_rated=0, timeout=45, poll=0.5):
     """Wait until Gemini finished generating (and has >= min_rated answers).
     Sending while it still generates = Enter ignored = 'empty read' later."""
@@ -1446,6 +1498,11 @@ def main():
             except Exception:
                 pass
     # Step 2 of 2: the real request, as a continuation of the same chat.
+    if continue_conv:
+        try:
+            ensure_idle_before_send()
+        except Exception as _ie:
+            print("[stop] check failed: %s" % _ie, file=sys.stderr)
     try:
         _prev_sig = last_request_signature()
     except Exception as _se:

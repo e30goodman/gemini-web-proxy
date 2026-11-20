@@ -136,6 +136,8 @@ All knobs are env vars, see `.env.example`. The important ones:
 | `GEMINI_SEND_CONFIRM` / `GEMINI_SEND_CONFIRM_S` | `1` / `14` | after Enter, check on the page that Gemini really took the message; if not, a continued chat moves to a fresh one instead of reading the old answer back |
 | `GEMINI_DELTA_SCHEMAS` / `GEMINI_DELTA_SCHEMAS_EVERY` | `0` / `4` | delta steps resend the tool schemas only when the tool set changed, plus every N steps as a reminder; `1` = every step (not recommended: fills the chat to the rollover limit in ~10 steps) |
 | `GEMINI_SALVAGE_CALL` | `1` | a tool call with ONE string argument whose inner quotes were not escaped (dead JSON) is recovered literally instead of being re-requested |
+| `GEMINI_CANCEL_ON_DISCONNECT` | `1` | when the client drops the connection (interrupt / follow-up message) the request is cancelled at once: bridge killed, no retries for a client that is gone; the next message tells Gemini its previous answer was interrupted |
+| `GEMINI_STOP_BEFORE_SEND` | `1` | on a continued chat the bridge presses Stop and waits for idle if Gemini is still generating, instead of pasting into a busy chat |
 | `GEMINI_REFUSAL_ROUNDS` | `2` | how many times a refusal / fake "no tools" excuse / Gemini internal error is retried (internal errors and "injection" refusals go to a fresh chat) |
 | `GEMINI_SKILL_MODE` | `chip` | how the tool-call skill is attached: `chip` (@ menu), `text` (old `/skill` trigger) or `none`; a `skill_mode` file next to the bridge overrides it without a restart |
 | `GEMINI_CHIP_ACTIVATION_TURN` | `1` | on a fresh chat the skill chip first gets its own short turn, then the task |

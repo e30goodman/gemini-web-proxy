@@ -2206,6 +2206,13 @@ async def generate_via_atspi_bridge(activation: str, prompt: str, session_id: st
             proc.kill()
             await proc.wait()
             raise _RetriesExhausted(1, "atspi bridge timed out (Xvfb/Firefox stuck?)")
+        except asyncio.CancelledError:
+            # the client is gone (interrupt / follow-up message): stop driving the browser
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            raise
         if proc.returncode == 4 and continue_url:
             raise _ChatLost(continue_url)
         if proc.returncode == 7:  # asked model not selectable
@@ -2579,7 +2586,16 @@ async def _chat_completions_inner(request: Request):
         if (not gemini_delta.DELTA_SCHEMAS_ALWAYS and not _reminder
                 and _dst.get("th") == gemini_delta.tools_hash(tools)):
             _dsys = gemini_delta.TOOLS_SAME_NOTE
-        prompt = "\n\n".join(p for p in (gemini_delta.DELTA_HEADER, _dsys, _dconv) if p)
+        _int_note = ""
+        # the follow-up usually arrives before the cancel of the old request is noticed,
+        # so the shape of the tail decides too: two user messages and no tool result
+        # = a message sent after an interrupted one
+        _tail_users = sum(1 for m in (_delta_tail or []) if isinstance(m, dict) and m.get("role") == "user")
+        _tail_tools = any(isinstance(m, dict) and m.get("role") == "tool" for m in (_delta_tail or []))
+        if _dst.get("interrupted") or (_tail_users >= 2 and not _tail_tools):
+            _int_note = INTERRUPT_NOTE
+            log.info("delta: previous request was interrupted -> note for Gemini")
+        prompt = "\n\n".join(p for p in (gemini_delta.DELTA_HEADER, _int_note, _dsys, _dconv) if p)
 
     def _inject(prompt):
         # Anti-menu on the MAIN path (2026-10-03): the clarify ban + the search-areas
@@ -3124,6 +3140,15 @@ async def _chat_completions_inner(request: Request):
                              [tc["name"] for tc in _tc])
                     break
 
+    # Last line of defence: whatever path produced the final text (hook, refusal
+    # rounds, decision nudge) - broken call markup never goes to the client as an answer.
+    if tools and allowed_names and not tool_calls and USE_ATSPI_BRIDGE \
+            and _looks_like_broken_call(text):
+        tool_calls = _salvage_call(text, allowed_names)
+        if not tool_calls:
+            log.info("broken-call at the end of the pipeline: plain notice to client")
+            text = 'Warning (bridge): Gemini returned a tool call with broken JSON; the call was dropped. Repeat the task.'
+
     if USE_ATSPI_BRIDGE:
         _model_notice_update()
         if not tool_calls and _model_notice["pending"]:
@@ -3405,11 +3430,65 @@ async def _parked(request: Request, body: dict, sid: str, stream: bool):
         return
 
 
+# CLIENT-GONE CANCEL: when the client drops the connection (Hermes interrupt, or a
+# follow-up message sent while the answer is still being produced) the request is
+# cancelled at once: the bridge process is killed, no retries / hooks / decision
+# rounds run for a client that is not there (they used to go on for minutes and mix
+# into the same Gemini chat as the NEXT request). The session is marked, and the
+# next delta tells Gemini that its previous answer was interrupted.
+CANCEL_ON_DISCONNECT = os.environ.get("GEMINI_CANCEL_ON_DISCONNECT", "1") != "0"
+INTERRUPT_NOTE = "[BRIDGE: the user interrupted your previous answer and sent a new message. The interrupted answer was NOT shown to him, a tool call in it (if any) was NOT executed - there will be no result for it, do not wait for one. Below are the user's messages since the last delivered answer; the first of them you may have seen already - it is the same message, not a new one. Take them together as one request and answer it.]"
+
+
+def _mark_interrupted(sid) -> None:
+    if not sid:
+        return
+    try:
+        _ddb = gemini_delta.load_state()
+        if isinstance(_ddb.get(sid), dict):
+            _ddb[sid]["interrupted"] = time.time()
+            gemini_delta.save_state(_ddb)
+    except Exception as exc:
+        log.warning("interrupt mark failed: %s", exc)
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request):
+    if not CANCEL_ON_DISCONNECT:
+        return await _chat_completions_guarded(request)
+    try:
+        _body = await request.json()  # read the body BEFORE polling for a disconnect
+    except Exception:
+        _body = {}
+    task = asyncio.ensure_future(_chat_completions_guarded(request))
+
+    async def _watch():
+        while not task.done():
+            await asyncio.sleep(0.4)
+            try:
+                gone = await request.is_disconnected()
+            except Exception:
+                gone = False
+            if gone and not task.done():
+                sid = _body.get("cache_scope_id") or _body.get("session_id")
+                log.info("client gone -> request cancelled (session %s)", sid)
+                _mark_interrupted(sid)
+                task.cancel()
+                return
+    watcher = asyncio.ensure_future(_watch())
+    try:
+        return await task
+    except asyncio.CancelledError:
+        return JSONResponse({"error": {"message": "client closed the request", "code": 499}},
+                            status_code=499)
+    finally:
+        watcher.cancel()
+
+
+async def _chat_completions_guarded(request: Request):
     try:
         return await _chat_completions_outer(request)
-    except _ModelUnavailable as e:  # plain reason, no other model
+    except _ModelUnavailable as e:
         return _unavailable_response(await request.json(), str(e))
 
 
